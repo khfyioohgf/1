@@ -1,5 +1,5 @@
-```yaml
-name: RDP + Tailscale + RustDesk + (Optional) Chrome Remote Desktop (A)
+yaml
+name: RDP + Tailscale + RustDesk + CRD (A)
 
 on:
   workflow_dispatch:
@@ -14,11 +14,11 @@ on:
         description: "Tailscale Auth key (reusable or ephemeral)"
         required: true
       tailscale_version:
-        description: "Tailscale MSI version to install (e.g. 1.82.0)"
+        description: "Tailscale version (e.g. 1.82.0)"
         required: false
         default: "1.82.0"
       rustdesk_version:
-        description: "RustDesk version to install (e.g. 1.3.1)"
+        description: "RustDesk version (e.g. 1.3.1)"
         required: false
         default: "1.3.1"
       quick_test:
@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
       runtime_minutes:
-        description: "Runtime in minutes (max 360; default 355)"
+        description: "Runtime in minutes (max 360, default 355)"
         required: false
         default: "355"
       do_purge:
@@ -34,21 +34,19 @@ on:
         required: false
         default: "true"
       cycles:
-        description: "0 = stop after this run; N = handoffs remaining including this run"
+        description: "0 = stop after this run; N = handoffs remaining"
         required: false
         default: "0"
       rdp_count:
-        description: "Number of RDP instances (1–10); ignored if crd_code is provided"
+        description: "Number of RDP instances (1-10), ignored if crd_code provided"
         required: false
         default: "1"
       crd_code:
-        description: >-
-          Paste raw CRD code (4/0AV...), full PowerShell command, or text/URL
-          containing --code="4/...". If provided → single instance; CRD launches first.
+        description: "Raw CRD code (4/0AV...) or full command or --code= string"
         required: false
         default: ""
       crd_pin:
-        description: "CRD PIN (6–12 digits). Avoids interactive prompt when launching CRD."
+        description: "CRD PIN (6-12 digits)"
         required: false
         default: "123456"
 
@@ -65,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.mk.outputs.matrix }}
-      multi:  ${{ steps.mk.outputs.multi }}
+      multi: ${{ steps.mk.outputs.multi }}
     steps:
       - id: mk
         run: |
@@ -80,8 +78,9 @@ jobs:
             $n = [Math]::Max(1, [Math]::Min(10, $n))
           }
 
-          $include = @(); 1..$n | ForEach-Object { $include += @{ id = $_ } }
-          $matrix  = @{ include = $include } | ConvertTo-Json -Compress
+          $include = @()
+          1..$n | ForEach-Object { $include += @{ id = $_ } }
+          $matrix = @{ include = $include } | ConvertTo-Json -Compress
           "matrix=$matrix" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
 
           $multi = if ($n -gt 1) { '1' } else { '0' }
@@ -143,7 +142,7 @@ jobs:
           $exe = "${Env:PROGRAMFILES(X86)}\Google\Chrome Remote Desktop\CurrentVersion\remoting_start_host.exe"
           if (Test-Path $exe) { Write-Host "CRD host already installed."; return }
 
-          Write-Host "CRD host not found — installing…"
+          Write-Host "Installing CRD host..."
           $exePath = "$env:TEMP\chromeremotedesktophost.exe"
           try {
             Invoke-WebRequest -Uri "https://dl.google.com/support/remote_assistance/ChromotingHostSetup.exe" `
@@ -153,7 +152,7 @@ jobs:
             Write-Host "EXE installer succeeded."
             return
           } catch {
-            Write-Host "EXE installer failed: $($_.Exception.Message) — falling back to MSI."
+            Write-Host "EXE failed: $($_.Exception.Message) - trying MSI..."
           }
 
           $msiPath = "$env:TEMP\chromeremotedesktophost.msi"
@@ -164,7 +163,7 @@ jobs:
             Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
             Write-Host "MSI installer succeeded."
           } catch {
-            Write-Error "CRD MSI fallback also failed: $($_.Exception.Message)"
+            Write-Error "CRD MSI fallback failed: $($_.Exception.Message)"
             exit 1
           }
 
@@ -177,7 +176,7 @@ jobs:
 
           $pin = "${{ inputs.crd_pin }}".Trim()
           if ($pin -notmatch '^\d{6,12}$') {
-            Write-Error "crd_pin must be 6–12 digits (got: $pin)."
+            Write-Error "crd_pin must be 6-12 digits."
             exit 1
           }
 
@@ -195,7 +194,7 @@ jobs:
           }
 
           if ($code) {
-            $redir   = "https://remotedesktop.google.com/_/oauthredirect"
+            $redir = "https://remotedesktop.google.com/_/oauthredirect"
             $argList = @(
               "--code=`"$code`"",
               "--redirect-url=`"$redir`"",
@@ -228,7 +227,7 @@ jobs:
           if ($ok) {
             Write-Host "[$svcName] is running or starting."
           } else {
-            Write-Warning "[$svcName] did not reach Running state within 60 s."
+            Write-Warning "[$svcName] did not reach Running state within 60s."
           }
 
           $logDir = "$env:ProgramData\Google\Chrome Remote Desktop"
@@ -251,12 +250,15 @@ jobs:
           if (-not (Yes "${{ inputs.do_purge }}")) { Write-Host "Purge disabled."; return }
 
           try {
-            $auth    = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${{ inputs.ts_api_key }}:"))
+            $auth = [Convert]::ToBase64String(
+              [Text.Encoding]::ASCII.GetBytes("${{ inputs.ts_api_key }}:")
+            )
             $headers = @{ Authorization = "Basic $auth" }
-            $tn      = [uri]::EscapeDataString("${{ inputs.ts_tailnet }}")
-            $resp    = Invoke-RestMethod -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices" `
-                         -Headers $headers -ErrorAction Stop
-            $purged  = 0
+            $tn = [uri]::EscapeDataString("${{ inputs.ts_tailnet }}")
+            $resp = Invoke-RestMethod `
+              -Uri "https://api.tailscale.com/api/v2/tailnet/$tn/devices" `
+              -Headers $headers -ErrorAction Stop
+            $purged = 0
             foreach ($d in $resp.devices) {
               if ($d.hostname -match '^bullet\d*$') {
                 Invoke-RestMethod -Method Delete `
@@ -278,7 +280,7 @@ jobs:
             $ver = "${{ inputs.tailscale_version }}"
             $url = "https://pkgs.tailscale.com/stable/tailscale-setup-$ver-amd64.msi"
             $dst = "$env:TEMP\tailscale.msi"
-            Write-Host "Downloading Tailscale $ver…"
+            Write-Host "Downloading Tailscale $ver..."
             Invoke-WebRequest -Uri $url -OutFile $dst -ErrorAction Stop
             Start-Process msiexec.exe -ArgumentList "/i","`"$dst`"","/quiet","/norestart" -Wait
             Remove-Item $dst -Force -ErrorAction SilentlyContinue
@@ -298,12 +300,12 @@ jobs:
 
       - name: Configure RDP user and firewall
         run: |
-          $u   = $env:RDP_USER
-          $p   = $env:RDP_PASS
+          $u = $env:RDP_USER
+          $p = $env:RDP_PASS
           $sec = ConvertTo-SecureString $p -AsPlainText -Force
 
           if (Get-LocalUser -Name $u -ErrorAction SilentlyContinue) {
-            Set-LocalUser   -Name $u -Password $sec -AccountNeverExpires $true
+            Set-LocalUser -Name $u -Password $sec -AccountNeverExpires $true
             Enable-LocalUser -Name $u
           } else {
             New-LocalUser -Name $u -Password $sec -AccountNeverExpires
@@ -337,13 +339,13 @@ jobs:
             Remove-Item $msi -Force -ErrorAction SilentlyContinue
             Write-Host "RustDesk installed via MSI."
           } catch {
-            Write-Host "MSI install failed ($($_.Exception.Message)) — trying winget…"
+            Write-Host "MSI failed ($($_.Exception.Message)) - trying winget..."
             winget install --id RustDesk.RustDesk -e --silent `
               --accept-package-agreements --accept-source-agreements --disable-interactivity
           }
 
           if (-not (Test-Path $rdExe)) {
-            Write-Error "RustDesk executable not found after install attempts."
+            Write-Error "RustDesk not found after install."
             exit 1
           }
 
@@ -365,13 +367,14 @@ jobs:
           Start-Sleep -Seconds 5
 
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $bounds   = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bitmap   = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+          $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
           $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
           $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
           $shotPath = "$env:TEMP\rustdesk_id${{ matrix.id }}.png"
           $bitmap.Save($shotPath, [System.Drawing.Imaging.ImageFormat]::Png)
-          $graphics.Dispose(); $bitmap.Dispose()
+          $graphics.Dispose()
+          $bitmap.Dispose()
 
           try {
             $resp = Invoke-RestMethod -Method Post `
@@ -382,7 +385,7 @@ jobs:
               "SCREENSHOT_URL=$($resp.data.downloadPage)" | Out-File -Append $env:GITHUB_ENV
               Write-Host "Screenshot: $($resp.data.downloadPage)"
             } else {
-              Write-Warning "Gofile upload returned status: $($resp.status)"
+              Write-Warning "Gofile upload status: $($resp.status)"
             }
           } catch {
             Write-Warning "Screenshot upload failed: $($_.Exception.Message)"
@@ -391,7 +394,7 @@ jobs:
       - name: Keep alive
         run: |
           $mins = [int]$env:RUNTIME_MINUTES
-          $end  = (Get-Date).AddMinutes($mins)
+          $end = (Get-Date).AddMinutes($mins)
           $mode = if ($env:CRD_ENABLED -eq '1') { '[CRD+RustDesk/RDP]' } else { '[RustDesk/RDP]' }
           while ((Get-Date) -lt $end) {
             Write-Host ("$mode  Heartbeat {0}  ends {1}  | Screenshot: {2}" -f
@@ -407,17 +410,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $cycles = [int]"${{ inputs.cycles }}"
-          if ($cycles -le 0) { Write-Host "cycles=0 — nothing to dispatch."; return }
+          if ($cycles -le 0) { Write-Host "cycles=0 - nothing to dispatch."; return }
 
-          $next    = $cycles - 1
+          $next = $cycles - 1
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
-            Accept        = "application/vnd.github+json"
+            Accept = "application/vnd.github+json"
           }
 
           if ($next -le 0) {
             $body = @{
-              ref    = "${{ github.ref_name }}"
+              ref = "${{ github.ref_name }}"
               inputs = @{
                 ts_tailnet  = "${{ inputs.ts_tailnet }}"
                 ts_api_key  = "${{ inputs.ts_api_key }}"
@@ -432,7 +435,7 @@ jobs:
             Write-Host "Dispatched STOP workflow."
           } else {
             $body = @{
-              ref    = "${{ github.ref_name }}"
+              ref = "${{ github.ref_name }}"
               inputs = @{
                 ts_tailnet      = "${{ inputs.ts_tailnet }}"
                 ts_api_key      = "${{ inputs.ts_api_key }}"
@@ -451,4 +454,3 @@ jobs:
               -Headers $headers -Body $body | Out-Null
             Write-Host "Dispatched Workflow B with cycles=$next."
           }
-```
