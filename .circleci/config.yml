@@ -1,0 +1,15 @@
+version: 2.1
+
+jobs:
+  placeholder:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - run:
+          name: No-op
+          command: echo "No CI steps defined for this repository."
+
+workflows:
+  default:
+    jobs:
+      - placeholder
